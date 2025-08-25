@@ -1,0 +1,6 @@
+\project2
+\project2\cif_files
+\project2\processed_data
+*.pkl
+*.cpython-*
+*.pyc
