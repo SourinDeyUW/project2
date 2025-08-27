@@ -23,7 +23,13 @@ from sklearn.manifold import TSNE
 from itertools import combinations
 
 # Import functions from existing files
-from view_polyhedra import count_and_visualize_polyhedra_interactive
+try:
+    from view_polyhedra import count_and_visualize_polyhedra_interactive
+except ImportError:
+    print("Warning: view_polyhedra not found, some visualization functions will be unavailable")
+    def count_and_visualize_polyhedra_interactive(*args, **kwargs):
+        return None
+
 from draw_graphs import (
     remove_overlapping_polyhedra,
     get_polyhedron_sharing_pairs_verbose,

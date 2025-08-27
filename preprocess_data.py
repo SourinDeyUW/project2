@@ -5,14 +5,23 @@ Pre-processes CIF files to speed up training by caching expensive computations
 
 import os
 import sys
-
+import pickle
 from tqdm import tqdm
 import sys
 import numpy as np
 from datetime import datetime
 
-# Add parent directory to import existing functions
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Import required functions from current directory
+try:
+    from extract_polyhedra_analysis import extract_polyhedra_from_cif
+    from draw_graphs import draw_polyhedron_sharing_graph
+    print("Successfully imported required functions")
+except ImportError as e:
+    print(f"Warning: Could not import functions: {e}")
+    print("Make sure extract_polyhedra_analysis.py and draw_graphs.py are accessible")
+    # Define dummy function to avoid NameError
+    def extract_polyhedra_from_cif(*args, **kwargs):
+        return None
 
 from data_loader import PolyhedralDataProcessor
 
