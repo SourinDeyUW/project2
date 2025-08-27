@@ -4,8 +4,8 @@ Pre-processes CIF files to speed up training by caching expensive computations
 """
 
 import os
-import pickle
-import pandas as pd
+import sys
+
 from tqdm import tqdm
 import sys
 import numpy as np
