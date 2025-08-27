@@ -26,7 +26,7 @@ except ImportError as e:
 from data_loader import PolyhedralDataProcessor
 
 def preprocess_dataset(data_dir, dataset_csv, output_file='processed_data.pkl', 
-                      force_reprocess=False, max_files=None):
+                      force_reprocess=False, max_files=None, start_idx=None, end_idx=None):
     """
     Pre-process all CIF files and save to pickle for fast loading during training.
     
@@ -36,6 +36,8 @@ def preprocess_dataset(data_dir, dataset_csv, output_file='processed_data.pkl',
         output_file: Output pickle file path
         force_reprocess: Whether to reprocess even if output exists
         max_files: Maximum number of files to process (for testing)
+        start_idx: Start index for batch processing
+        end_idx: End index for batch processing
     """
     
     if os.path.exists(output_file) and not force_reprocess:
@@ -68,7 +70,12 @@ def preprocess_dataset(data_dir, dataset_csv, output_file='processed_data.pkl',
     
     print(f"Searched in {data_dir} and found CIF files in subdirectories")
     
-    if max_files:
+    # Apply range-based filtering if start_idx and end_idx are provided
+    if start_idx is not None and end_idx is not None:
+        cif_files = cif_files[start_idx:end_idx]
+        cif_paths = cif_paths[start_idx:end_idx]
+        print(f"Processing files from index {start_idx} to {end_idx}")
+    elif max_files:
         cif_files = cif_files[:max_files]
         cif_paths = cif_paths[:max_files]
         print(f"Processing first {max_files} files for testing")
@@ -267,8 +274,8 @@ if __name__ == "__main__":
                        help='Directory containing CIF files')
     parser.add_argument('--dataset_csv', default='../dataset.csv', 
                        help='CSV file with structure metadata')
-    parser.add_argument('--output', default='processed_data.pkl', 
-                       help='Output pickle file')
+    parser.add_argument('--output', default=None, 
+                       help='Output pickle file (auto-generated if not specified)')
     parser.add_argument('--force', action='store_true', 
                        help='Force reprocessing even if output exists')
     parser.add_argument('--analyze', action='store_true', 
@@ -277,8 +284,23 @@ if __name__ == "__main__":
                        help='Test preprocessing on a few files')
     parser.add_argument('--max_files', type=int, default=None,
                        help='Maximum number of files to process (for testing)')
+    parser.add_argument('--start_idx', type=int, default=None,
+                       help='Start index for batch processing')
+    parser.add_argument('--end_idx', type=int, default=None,
+                       help='End index for batch processing')
     
     args = parser.parse_args()
+    
+    # Auto-generate output filename based on range or max_files
+    if args.output is None:
+        if args.start_idx is not None and args.end_idx is not None:
+            args.output = f'processed_data_{args.start_idx}_{args.end_idx}.pkl'
+        elif args.max_files is not None:
+            args.output = f'processed_data_0_{args.max_files}.pkl'
+        elif args.test:
+            args.output = 'test_processed_data.pkl'
+        else:
+            args.output = 'processed_data.pkl'
     
     if args.test:
         test_preprocessing(args.data_dir, max_files=3)
@@ -290,5 +312,7 @@ if __name__ == "__main__":
             dataset_csv=args.dataset_csv,
             output_file=args.output,
             force_reprocess=args.force,
-            max_files=args.max_files
+            max_files=args.max_files,
+            start_idx=args.start_idx,
+            end_idx=args.end_idx
         )
