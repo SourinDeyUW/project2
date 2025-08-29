@@ -132,24 +132,18 @@ class ComprehensiveTrainer:
     def _extract_band_gap_targets(self, batch):
         """Extract band gap targets for batch"""
         targets = []
-        missing_count = 0
-        avg_bg = np.mean(list(self.band_gap_data.values()))
         
         for cif_filename in batch['cif_filenames']:
             # Extract material ID from CIF filename
             material_id = cif_filename.split('\\')[-1].split('.')[0]
             
-            # Get band gap value
+            # Get band gap value (should always exist since we pre-filtered)
             band_gap = self.band_gap_data.get(material_id, None)
             
             if band_gap is not None:
                 targets.append(band_gap)
             else:
-                targets.append(avg_bg)
-                missing_count += 1
-        
-        if missing_count > 0:
-            print(f"Warning: {missing_count} missing band gaps in batch, using average: {avg_bg:.3f}")
+                raise ValueError(f"❌ Missing band gap for {material_id} - this should not happen after filtering!")
         
         return torch.tensor(targets, dtype=torch.float32, device=self.device)
     
@@ -459,25 +453,34 @@ def main():
         print("❌ No data loaded from pickle files!")
         return
     
-    # Step 3: Filter structures with band gap data
+    # Step 3: Filter structures with band gap data (strict filtering)
     print("\n🎯 Step 3: Filtering structures with band gap data...")
     structures_with_targets = []
     missing_targets = 0
+    invalid_bandgaps = 0
     
     for structure in all_structures:
         cif_filename = structure['cif_filename']
         material_id = cif_filename.split('\\')[-1].split('.')[0]
         
         if material_id in band_gap_data:
-            structures_with_targets.append(structure)
+            band_gap_value = band_gap_data[material_id]
+            
+            # Additional validation: ensure band gap is a valid number
+            if isinstance(band_gap_value, (int, float)) and not np.isnan(band_gap_value):
+                structures_with_targets.append(structure)
+            else:
+                invalid_bandgaps += 1
+                print(f"⚠️  Invalid band gap for {material_id}: {band_gap_value}")
         else:
             missing_targets += 1
     
-    print(f"✅ Structures with band gap data: {len(structures_with_targets)}")
+    print(f"✅ Structures with valid band gap data: {len(structures_with_targets)}")
     print(f"❌ Structures missing band gap data: {missing_targets}")
+    print(f"⚠️  Structures with invalid band gap values: {invalid_bandgaps}")
     
     if len(structures_with_targets) < 10:
-        print("❌ Not enough structures with band gap data for training!")
+        print("❌ Not enough structures with valid band gap data for training!")
         return
     
     # Step 4: Create train/validation split
