@@ -151,7 +151,7 @@ class ComprehensiveTrainer:
         """Train for one epoch"""
         self.model.train()
         total_loss = 0.0
-        
+        #
         for batch_idx, batch in enumerate(train_batches):
             # Move data to device
             batch = self._move_batch_to_device(batch)
@@ -462,7 +462,7 @@ def main():
     for structure in all_structures:
         cif_filename = structure['cif_filename']
         material_id = cif_filename.split('\\')[-1].split('.')[0]
-        
+        material_id=material_id.split('/')[-1]
         if material_id in band_gap_data:
             band_gap_value = band_gap_data[material_id]
             
