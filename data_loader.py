@@ -337,6 +337,10 @@ class PolyhedralDataset:
                         'prototype': row.get('prototype', 'Unknown')
                     }
     
+    def __len__(self):
+        """Return the number of processed structures"""
+        return len(self.processed_data)
+    
     def load_data(self, cif_files=None):
         """Load and process CIF files"""
         if cif_files is None:
