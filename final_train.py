@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import glob
+from tqdm import tqdm
 
 from data_loader import PolyhedralDataset, create_batches
 from torch_geometric.nn import GCNConv, global_mean_pool, global_add_pool
@@ -365,12 +366,48 @@ class ComprehensiveTrainer:
         plt.show()
 
 
-def load_band_gap_data(csv_path="data/mp_formulas.csv"):
+def load_band_gap_data_for_oxides(oxide_dir="oxide_cifs"):
+    """Load band gap data for oxide materials by matching filenames"""
+    try:
+        # First try to load from existing CSV
+        band_gap_data = load_band_gap_data_csv("data/mp_formulas.csv")
+        
+        if not band_gap_data:
+            print("❌ No band gap data found in CSV")
+            return {}
+        
+        # Get all material IDs from CIF files
+        import glob
+        cif_files = glob.glob(f"{oxide_dir}/*.cif")
+        oxide_material_ids = set()
+        
+        for cif_file in cif_files:
+            material_id = os.path.basename(cif_file).replace('.cif', '')
+            oxide_material_ids.add(material_id)
+        
+        print(f"🔍 Found {len(cif_files)} oxide CIF files")
+        print(f"📊 Available band gap data for {len(band_gap_data)} total materials")
+        
+        # Filter band gap data to only include oxide materials
+        oxide_band_gap_data = {}
+        for material_id in oxide_material_ids:
+            if material_id in band_gap_data:
+                oxide_band_gap_data[material_id] = band_gap_data[material_id]
+        
+        print(f"✅ Matched band gap data for {len(oxide_band_gap_data)} oxide materials")
+        return oxide_band_gap_data
+        
+    except Exception as e:
+        print(f"❌ Error loading band gap data for oxides: {e}")
+        return {}
+
+
+def load_band_gap_data_csv(csv_path="data/mp_formulas.csv"):
     """Load band gap data from CSV file"""
     try:
         df = pd.read_csv(csv_path)
         band_gap_dict = dict(zip(df['material_id'], df['band_gap']))
-        print(f"✅ Loaded band gap data for {len(band_gap_dict)} materials")
+        print(f"✅ Loaded band gap data for {len(band_gap_dict)} materials from CSV")
         return band_gap_dict
     except FileNotFoundError:
         print(f"❌ Error: {csv_path} not found!")
@@ -378,6 +415,74 @@ def load_band_gap_data(csv_path="data/mp_formulas.csv"):
     except Exception as e:
         print(f"❌ Error loading band gap data: {e}")
         return {}
+
+
+def process_oxide_cifs(oxide_dir="oxide_cifs", max_files=None):
+    """Process oxide CIF files directly"""
+    import glob
+    from pymatgen.io.cif import CifParser
+    from pymatgen.analysis.local_env import CrystalNN
+    from tqdm import tqdm
+    
+    cif_files = glob.glob(f"{oxide_dir}/*.cif")
+    
+    if not cif_files:
+        print(f"❌ No CIF files found in {oxide_dir}")
+        return []
+    
+    print(f"📁 Found {len(cif_files)} oxide CIF files")
+    
+    # Limit number of files if specified
+    if max_files is not None and len(cif_files) > max_files:
+        print(f"🔄 Processing first {max_files} files for demo")
+        cif_files = cif_files[:max_files]
+    else:
+        print(f"🔄 Processing all {len(cif_files)} oxide CIF files")
+    
+    all_data = []
+    failed_count = 0
+    
+    for cif_file in tqdm(cif_files, desc="Processing oxide CIFs"):
+        try:
+            # Convert to absolute path
+            abs_cif_path = os.path.abspath(cif_file)
+            
+            # Create polyhedral data using the processor directly
+            polyhedral_data = create_polyhedral_data_from_structure(None, abs_cif_path)
+            
+            if polyhedral_data is not None:
+                all_data.append(polyhedral_data)
+            else:
+                failed_count += 1
+                
+        except Exception as e:
+            failed_count += 1
+            continue
+    
+    print(f"\n📈 Summary:")
+    print(f"  Successfully processed: {len(all_data)} structures")
+    print(f"  Failed to process: {failed_count} structures")
+    
+    return all_data
+
+
+def create_polyhedral_data_from_structure(structure, cif_filename):
+    """Create polyhedral data from pymatgen structure matching expected format"""
+    try:
+        from data_loader import PolyhedralDataProcessor
+        
+        # Use the existing PolyhedralDataProcessor to properly process the structure
+        processor = PolyhedralDataProcessor()
+        result = processor.process_cif_file(cif_filename, target_property=None)
+        
+        if result is not None:
+            return result
+        else:
+            return None
+        
+    except Exception as e:
+        print(f"Error processing {cif_filename}: {e}")
+        return None
 
 
 def combine_pickle_files(pickle_pattern="processed_data_*.pkl"):
@@ -439,18 +544,18 @@ def main():
     print("🚀 Comprehensive Two-Stage GNN Training")
     print("=" * 60)
     
-    # Step 1: Load band gap data
-    print("\n📊 Step 1: Loading band gap data...")
-    band_gap_data = load_band_gap_data("data/mp_formulas.csv")
+    # Step 1: Load band gap data for oxide materials
+    print("\n📊 Step 1: Loading band gap data for oxide materials...")
+    band_gap_data = load_band_gap_data_for_oxides("oxide_cifs")
     if not band_gap_data:
         print("❌ Cannot proceed without band gap data!")
         return
     
-    # Step 2: Combine all pickle files
-    print("\n📂 Step 2: Combining pickle files...")
-    all_structures = combine_pickle_files("processed_data_*.pkl")
+    # Step 2: Process oxide CIF files directly
+    print("\n📂 Step 2: Processing oxide CIF files...")
+    all_structures = process_oxide_cifs("oxide_cifs", max_files=None)  # Use all files
     if not all_structures:
-        print("❌ No data loaded from pickle files!")
+        print("❌ No data loaded from oxide CIF files!")
         return
     
     # Step 3: Filter structures with band gap data (strict filtering)
@@ -497,7 +602,7 @@ def main():
     
     # Step 5: Create batches
     print("\n🔄 Step 5: Creating batches...")
-    batch_size = min(8, len(train_data) // 10)  # Adaptive batch size
+    batch_size = min(16, len(train_data) // 20)  # Larger batch size for more data
     train_batches = create_batches(train_data, batch_size)
     val_batches = create_batches(val_data, batch_size)
     
@@ -519,7 +624,7 @@ def main():
     
     try:
         train_losses, val_losses, val_maes, val_rmses, val_r2s = trainer.train(
-            train_batches, val_batches, num_epochs=30
+            train_batches, val_batches, num_epochs=50  # More epochs for full dataset
         )
         
         print("\n🎉 Final Results:")
