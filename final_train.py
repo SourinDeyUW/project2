@@ -417,12 +417,21 @@ def load_band_gap_data_csv(csv_path="data/mp_formulas.csv"):
         return {}
 
 
-def process_oxide_cifs(oxide_dir="oxide_cifs", max_files=None):
-    """Process oxide CIF files directly"""
+def process_oxide_cifs(oxide_dir="oxide_cifs", max_files=None, save_processed=True, processed_file="processed_oxide_data.pkl"):
+    """Process oxide CIF files directly with option to save processed data"""
     import glob
     from pymatgen.io.cif import CifParser
     from pymatgen.analysis.local_env import CrystalNN
     from tqdm import tqdm
+    import pickle
+    from datetime import datetime
+    
+    # Check if processed file already exists
+    if save_processed and os.path.exists(processed_file):
+        print(f"🔍 Found existing processed data file: {processed_file}")
+        response = input("Load existing data? (y/n): ").lower().strip()
+        if response in ['y', 'yes']:
+            return load_processed_oxide_data(processed_file)
     
     cif_files = glob.glob(f"{oxide_dir}/*.cif")
     
@@ -463,7 +472,70 @@ def process_oxide_cifs(oxide_dir="oxide_cifs", max_files=None):
     print(f"  Successfully processed: {len(all_data)} structures")
     print(f"  Failed to process: {failed_count} structures")
     
+    # Save processed data if requested
+    if save_processed and all_data:
+        save_processed_oxide_data(all_data, processed_file, len(cif_files), len(all_data))
+    
     return all_data
+
+
+def save_processed_oxide_data(processed_data, save_path, total_files, successful_files):
+    """Save processed oxide data to pickle file"""
+    try:
+        from datetime import datetime
+        
+        # Create metadata
+        metadata = {
+            'processing_date': datetime.now().isoformat(),
+            'total_files': total_files,
+            'successful': successful_files,
+            'failed': total_files - successful_files,
+            'success_rate': successful_files / total_files * 100,
+            'data_type': 'oxide_structures',
+            'source': 'Materials Project binary/ternary metal oxides'
+        }
+        
+        # Package data
+        save_data = {
+            'metadata': metadata,
+            'processed_data': processed_data
+        }
+        
+        # Save to pickle
+        with open(save_path, 'wb') as f:
+            pickle.dump(save_data, f)
+        
+        print(f"\n💾 Processed oxide data saved to: {save_path}")
+        print(f"   📊 Structures: {successful_files}")
+        print(f"   📈 Success rate: {metadata['success_rate']:.1f}%")
+        print(f"   🗓️  Date: {metadata['processing_date']}")
+        
+    except Exception as e:
+        print(f"❌ Error saving processed data: {e}")
+
+
+def load_processed_oxide_data(file_path):
+    """Load processed oxide data from pickle file"""
+    try:
+        print(f"📖 Loading processed oxide data from: {file_path}")
+        
+        with open(file_path, 'rb') as f:
+            data = pickle.load(f)
+        
+        metadata = data['metadata']
+        processed_data = data['processed_data']
+        
+        print(f"✅ Loaded {len(processed_data)} processed oxide structures")
+        print(f"   📊 Original processing: {metadata['successful']}/{metadata['total_files']} structures")
+        print(f"   📈 Success rate: {metadata['success_rate']:.1f}%")
+        print(f"   🗓️  Processing date: {metadata.get('processing_date', 'Unknown')}")
+        print(f"   🔬 Data type: {metadata.get('data_type', 'Unknown')}")
+        
+        return processed_data
+        
+    except Exception as e:
+        print(f"❌ Error loading processed data: {e}")
+        return []
 
 
 def create_polyhedral_data_from_structure(structure, cif_filename):
@@ -551,9 +623,9 @@ def main():
         print("❌ Cannot proceed without band gap data!")
         return
     
-    # Step 2: Process oxide CIF files directly
+    # Step 2: Process oxide CIF files directly (with option to save/load processed data)
     print("\n📂 Step 2: Processing oxide CIF files...")
-    all_structures = process_oxide_cifs("oxide_cifs", max_files=None)  # Use all files
+    all_structures = process_oxide_cifs("oxide_cifs", max_files=None, save_processed=True)  # Use all files and save processed data
     if not all_structures:
         print("❌ No data loaded from oxide CIF files!")
         return
