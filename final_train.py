@@ -137,7 +137,7 @@ class ComprehensiveTrainer:
         for cif_filename in batch['cif_filenames']:
             # Extract material ID from CIF filename
             material_id = cif_filename.split('\\')[-1].split('.')[0]
-            
+            material_id=material_id.split('/')[-1]
             # Get band gap value (should always exist since we pre-filtered)
             band_gap = self.band_gap_data.get(material_id, None)
             
