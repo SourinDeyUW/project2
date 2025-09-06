@@ -8,7 +8,49 @@ This implementation uses two separate message passing networks:
 3. Concatenation: Combine embeddings from both graphs
 4. Final FNN: Feedforward neural network for band gap prediction
 
-The architecture leverages both atomic-level and polyhedral-level information
+The architecture leverages both ato    # Load dataset
+    dataset = OxideDataset(config['pickle_file'], config['csv_file'])
+    
+    # Create train/validation/test split
+    indices = list(range(len(dataset)))
+    train_indices, temp_indices = train_test_split(
+        indices, 
+        train_size=config['train_split'], 
+        random_state=42
+    )
+    val_indices, test_indices = train_test_split(
+        temp_indices,
+        train_size=0.5,  # Split remaining data equally between val and test
+        random_state=42
+    )
+    
+    # Filter out samples without band gap data
+    valid_train_indices = []
+    valid_val_indices = []
+    valid_test_indices = []
+    
+    for idx in train_indices:
+        item = dataset.get_item(idx)
+        if item['target'].item() >= 0:  # Include all band gaps >= 0
+            valid_train_indices.append(idx)
+    
+    for idx in val_indices:
+        item = dataset.get_item(idx)
+        if item['target'].item() >= 0:
+            valid_val_indices.append(idx)
+            
+    for idx in test_indices:
+        item = dataset.get_item(idx)
+        if item['target'].item() >= 0:
+            valid_test_indices.append(idx)
+    
+    print(f"📊 Train samples: {len(valid_train_indices)}")
+    print(f"📊 Validation samples: {len(valid_val_indices)}")
+    print(f"📊 Test samples: {len(valid_test_indices)}")
+    
+    if len(valid_train_indices) == 0:
+        print("❌ No valid training samples found!")
+        returnl and polyhedral-level information
 for improved metal oxide property prediction.
 """
 
@@ -489,12 +531,28 @@ def train_dual_graph_model():
         def __getitem__(self, idx):
             return self.dataset.get_item(self.indices[idx])
     
-    train_dataset_wrapper = DualGraphDataset(all_indices, dataset)
+    train_dataset_wrapper = DualGraphDataset(valid_train_indices, dataset)
+    val_dataset_wrapper = DualGraphDataset(valid_val_indices, dataset)
+    test_dataset_wrapper = DualGraphDataset(valid_test_indices, dataset)
     
     train_loader = torch.utils.data.DataLoader(
         train_dataset_wrapper,
         batch_size=config['batch_size'],
         shuffle=True,
+        collate_fn=collate_dual_graphs
+    )
+    
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset_wrapper,
+        batch_size=config['batch_size'],
+        shuffle=False,
+        collate_fn=collate_dual_graphs
+    )
+    
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset_wrapper,
+        batch_size=config['batch_size'],
+        shuffle=False,
         collate_fn=collate_dual_graphs
     )
     
@@ -524,7 +582,8 @@ def train_dual_graph_model():
     
     # Training loop
     train_losses = []
-    best_loss = float('inf')
+    val_losses = []
+    best_val_loss = float('inf')
     
     for epoch in range(config['num_epochs']):
         # Training
@@ -554,66 +613,113 @@ def train_dual_graph_model():
         avg_train_loss = train_loss / len(train_loader)
         train_losses.append(avg_train_loss)
         
-        print(f"Epoch {epoch+1:3d}: Train Loss: {avg_train_loss:.4f}")
+        # Validation
+        model.eval()
+        val_loss = 0.0
+        val_preds = []
+        val_targets = []
+        
+        with torch.no_grad():
+            for batch in val_loader:
+                atomistic_data = {k: v.to(config['device']) for k, v in batch['atomistic'].items()}
+                polyhedral_data = {k: v.to(config['device']) for k, v in batch['polyhedral'].items()}
+                targets = batch['target'].to(config['device'])
+                
+                predictions = model(atomistic_data, polyhedral_data)
+                loss = criterion(predictions.squeeze(), targets)
+                
+                val_loss += loss.item()
+                val_preds.extend(predictions.squeeze().cpu().numpy())
+                val_targets.extend(targets.cpu().numpy())
+        
+        avg_val_loss = val_loss / len(val_loader)
+        val_losses.append(avg_val_loss)
+        
+        # Calculate validation metrics
+        val_mae = mean_absolute_error(val_targets, val_preds)
+        val_rmse = np.sqrt(mean_squared_error(val_targets, val_preds))
+        val_r2 = r2_score(val_targets, val_preds)
+        
+        print(f"Epoch {epoch+1:3d}: Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, Val MAE: {val_mae:.4f}, Val R²: {val_r2:.4f}")
         
         # Save best model
-        if avg_train_loss < best_loss:
-            best_loss = avg_train_loss
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'config': config,
                 'epoch': epoch,
-                'train_loss': avg_train_loss
+                'val_loss': avg_val_loss
             }, 'checkpoints/dual_graph_best_model.pth')
-            print(f"💾 Saved best model (Train Loss: {avg_train_loss:.4f})")
+            print(f"💾 Saved best model (Val Loss: {avg_val_loss:.4f})")
         
-        scheduler.step(avg_train_loss)
+        scheduler.step(avg_val_loss)
     
-    # Plot training curves
-    plt.figure(figsize=(10, 4))
+    # Final test evaluation
+    print(f"\n🧪 Final Test Evaluation:")
+    model.eval()
+    test_loss = 0.0
+    test_preds = []
+    test_targets = []
     
-    plt.subplot(1, 2, 1)
+    with torch.no_grad():
+        for batch in test_loader:
+            atomistic_data = {k: v.to(config['device']) for k, v in batch['atomistic'].items()}
+            polyhedral_data = {k: v.to(config['device']) for k, v in batch['polyhedral'].items()}
+            targets = batch['target'].to(config['device'])
+            
+            predictions = model(atomistic_data, polyhedral_data)
+            loss = criterion(predictions.squeeze(), targets)
+            
+            test_loss += loss.item()
+            test_preds.extend(predictions.squeeze().cpu().numpy())
+            test_targets.extend(targets.cpu().numpy())
+    
+    avg_test_loss = test_loss / len(test_loader)
+    test_mae = mean_absolute_error(test_targets, test_preds)
+    test_rmse = np.sqrt(mean_squared_error(test_targets, test_preds))
+    test_r2 = r2_score(test_targets, test_preds)
+    
+    print(f"📊 Test Results:")
+    print(f"   Test Loss: {avg_test_loss:.4f}")
+    print(f"   Test MAE: {test_mae:.4f} eV")
+    print(f"   Test RMSE: {test_rmse:.4f} eV")
+    print(f"   Test R²: {test_r2:.4f}")
+    
+    # Plot training curves and results
+    plt.figure(figsize=(15, 5))
+    
+    plt.subplot(1, 3, 1)
     plt.plot(train_losses, label='Train Loss')
+    plt.plot(val_losses, label='Validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.title('Training Curves')
     plt.legend()
     plt.grid(True)
     
-    # Final evaluation on training data (for visualization)
-    model.eval()
-    all_preds = []
-    all_targets = []
-    
-    with torch.no_grad():
-        for batch in train_loader:
-            atomistic_data = {k: v.to(config['device']) for k, v in batch['atomistic'].items()}
-            polyhedral_data = {k: v.to(config['device']) for k, v in batch['polyhedral'].items()}
-            targets = batch['target'].to(config['device'])
-            
-            predictions = model(atomistic_data, polyhedral_data)
-            all_preds.extend(predictions.squeeze().cpu().numpy())
-            all_targets.extend(targets.cpu().numpy())
-    
-    # Calculate final metrics
-    mae = mean_absolute_error(all_targets, all_preds)
-    rmse = np.sqrt(mean_squared_error(all_targets, all_preds))
-    r2 = r2_score(all_targets, all_preds)
-    
-    plt.subplot(1, 2, 2)
-    plt.scatter(all_targets, all_preds, alpha=0.6)
-    plt.plot([min(all_targets), max(all_targets)], [min(all_targets), max(all_targets)], 'r--')
+    plt.subplot(1, 3, 2)
+    plt.scatter(val_targets, val_preds, alpha=0.6, label='Validation')
+    plt.plot([min(val_targets), max(val_targets)], [min(val_targets), max(val_targets)], 'r--')
     plt.xlabel('True Band Gap (eV)')
     plt.ylabel('Predicted Band Gap (eV)')
-    plt.title(f'Dual Graph GNN Results (Full Dataset)\nR² = {r2:.3f}, MAE = {mae:.3f} eV')
+    plt.title(f'Validation Results\nR² = {val_r2:.3f}, MAE = {val_mae:.3f} eV')
+    plt.grid(True)
+    
+    plt.subplot(1, 3, 3)
+    plt.scatter(test_targets, test_preds, alpha=0.6, color='green', label='Test')
+    plt.plot([min(test_targets), max(test_targets)], [min(test_targets), max(test_targets)], 'r--')
+    plt.xlabel('True Band Gap (eV)')
+    plt.ylabel('Predicted Band Gap (eV)')
+    plt.title(f'Test Results\nR² = {test_r2:.3f}, MAE = {test_mae:.3f} eV')
     plt.grid(True)
     
     plt.tight_layout()
     plt.savefig('dual_graph_training_results.png', dpi=300, bbox_inches='tight')
     plt.show()
     
-    print(f"🎉 Training completed! Best loss: {best_loss:.4f}")
-    print(f"📊 Final metrics - MAE: {mae:.4f} eV, RMSE: {rmse:.4f} eV, R²: {r2:.4f}")
+    print(f"🎉 Training completed! Best validation loss: {best_val_loss:.4f}")
+    print(f"📊 Final test metrics - MAE: {test_mae:.4f} eV, RMSE: {test_rmse:.4f} eV, R²: {test_r2:.4f}")
 
 
 if __name__ == "__main__":
